@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getPriceGap } from '../lib/ondoPrice';
+import { getPriceGap } from '../lib/ondoPrice.js';
 
 /** Pro / Enterprise: raise if you still hit timeouts (Hobby max is 10s). */
 export const config = {

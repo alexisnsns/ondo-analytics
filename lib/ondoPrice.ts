@@ -5,17 +5,13 @@ export type PriceGapResult = {
   gapPct: number;
 };
 
-type OndoAsset = {
-  symbol: string;
-  primaryMarket?: { price?: string; sharesMultiplier?: string };
-};
-
 /** Stay under Vercel Hobby’s 10s function cap so we can return JSON instead of FUNCTION_INVOCATION_FAILED. */
 const FETCH_TIMEOUT_MS = 8000;
 const ONDO_ASSETS_TTL_MS = 5 * 60 * 1000;
 
-let ondoAssetsCache: { expires: number; list: OndoAsset[] } | null = null;
-let ondoAssetsInflight: Promise<OndoAsset[]> | null = null;
+/** Raw JSON text — do not JSON.parse the full body: each asset embeds a huge priceHistory24h array (~OOM on serverless). */
+let ondoAssetsTextCache: { expires: number; text: string } | null = null;
+let ondoAssetsInflight: Promise<string> | null = null;
 
 function fetchTimeoutSignal(): AbortSignal {
   return AbortSignal.timeout(FETCH_TIMEOUT_MS);
@@ -29,10 +25,34 @@ function getFinnhubToken(): string {
   return key;
 }
 
-async function fetchOndoAssetsList(): Promise<OndoAsset[]> {
+/**
+ * Pull primary-market price + multiplier without parsing the full JSON tree (avoids multi‑MB object graphs on Vercel).
+ * Matches Ondo’s current shape: "primaryMarket":{"symbol":"TICKERon","price":"…", ... "sharesMultiplier":"…"
+ */
+function parseImpliedFromOndoAssetsText(text: string, ondoSymbol: string): { price: string; sharesMultiplier: string } {
+  const needle = `"primaryMarket":{"symbol":"${ondoSymbol}","price":"`;
+  const i = text.indexOf(needle);
+  if (i === -1) {
+    throw new Error(`No Ondo primary market data for ${ondoSymbol}`);
+  }
+  const priceStart = i + needle.length;
+  const priceEnd = text.indexOf('"', priceStart);
+  if (priceEnd === -1) {
+    throw new Error(`Invalid Ondo price field for ${ondoSymbol}`);
+  }
+  const price = text.slice(priceStart, priceEnd);
+  const afterPrice = text.slice(priceEnd);
+  const multMatch = afterPrice.match(/"sharesMultiplier":"([^"]+)"/);
+  if (!multMatch) {
+    throw new Error(`No sharesMultiplier for ${ondoSymbol}`);
+  }
+  return { price, sharesMultiplier: multMatch[1] };
+}
+
+async function fetchOndoAssetsText(): Promise<string> {
   const now = Date.now();
-  if (ondoAssetsCache && ondoAssetsCache.expires > now) {
-    return ondoAssetsCache.list;
+  if (ondoAssetsTextCache && ondoAssetsTextCache.expires > now) {
+    return ondoAssetsTextCache.text;
   }
   if (ondoAssetsInflight) {
     return ondoAssetsInflight;
@@ -49,13 +69,12 @@ async function fetchOndoAssetsList(): Promise<OndoAsset[]> {
     if (!res.ok) {
       throw new Error(`Ondo assets failed: ${res.status}`);
     }
-    const json = (await res.json()) as { assets?: OndoAsset[] };
-    const assets = json.assets;
-    if (!Array.isArray(assets)) {
-      throw new Error('Ondo response missing assets[]');
+    const text = await res.text();
+    if (!text.includes('"assets"')) {
+      throw new Error('Ondo response missing assets payload');
     }
-    ondoAssetsCache = { expires: Date.now() + ONDO_ASSETS_TTL_MS, list: assets };
-    return assets;
+    ondoAssetsTextCache = { expires: Date.now() + ONDO_ASSETS_TTL_MS, text };
+    return text;
   })();
 
   try {
@@ -83,16 +102,9 @@ export async function getUnderlyingPrice(symbol: string): Promise<number> {
 }
 
 export async function getImpliedPrice(symbol: string): Promise<number> {
-  const assets = await fetchOndoAssetsList();
-
-  const assetMap = Object.fromEntries(assets.map((a) => [a.symbol, a]));
   const ondoSymbol = `${symbol}on`;
-  const asset = assetMap[ondoSymbol];
-  const priceStr = asset?.primaryMarket?.price;
-  const multStr = asset?.primaryMarket?.sharesMultiplier;
-  if (!priceStr || !multStr) {
-    throw new Error(`No Ondo primary market data for ${ondoSymbol}`);
-  }
+  const text = await fetchOndoAssetsText();
+  const { price: priceStr, sharesMultiplier: multStr } = parseImpliedFromOndoAssetsText(text, ondoSymbol);
 
   const price = parseFloat(priceStr);
   const multiplier = parseFloat(multStr);
