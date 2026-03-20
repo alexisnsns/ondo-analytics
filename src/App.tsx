@@ -19,9 +19,14 @@ async function readApiBody(res: Response): Promise<ApiOk | ApiErr> {
   try {
     return JSON.parse(text) as ApiOk | ApiErr;
   } catch {
-    const snippet = text.replace(/\s+/g, ' ').slice(0, 160);
+    const snippet = text.replace(/\s+/g, ' ').slice(0, 220);
+    if (snippet.includes('FUNCTION_INVOCATION_FAILED')) {
+      throw new Error(
+        'Serverless invocation failed (often timeout or crash). Check Vercel logs; on Hobby, functions are capped at 10s. Retry or upgrade plan if the Ondo assets request is slow.'
+      );
+    }
     throw new Error(
-      `Not JSON (${res.status}): ${snippet}${text.length > 160 ? '…' : ''}`
+      `Not JSON (${res.status}): ${snippet}${text.length > 220 ? '…' : ''}`
     );
   }
 }
