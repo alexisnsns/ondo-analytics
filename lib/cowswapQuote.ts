@@ -1,6 +1,6 @@
 /** CoW Protocol (Cowswap) mainnet — on-chain USDC sell quote for Ondo tokens. */
 
-import ondoMainnetTokens from './ondo-mainnet-tokens/tokens.json';
+import ondoMainnetTokens from './ondo-mainnet-tokens/tokens.json' with { type: 'json' };
 
 const FETCH_TIMEOUT_MS = 8000;
 
