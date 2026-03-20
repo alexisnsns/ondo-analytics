@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 type ApiOk = {
   symbol: string;
   underlyingUsd: number;
+  ondoTokenUsd: number;
   impliedUsd: number;
   gapPct: number;
 };
@@ -42,6 +43,18 @@ function fmtUsd(n: number) {
 function fmtPct(n: number) {
   const sign = n > 0 ? '+' : '';
   return `${sign}${n.toFixed(4)}%`;
+}
+
+function gapInterpretation(symbol: string, gapPct: number) {
+  const label = `${symbol} tokenized stock price on Ondo`;
+  const tail = 'its equivalent spot price in financial markets';
+  const eps = 1e-9;
+  if (Math.abs(gapPct) < eps) {
+    return `${label} matches ${tail}.`;
+  }
+  const dir = gapPct > 0 ? 'more expensive' : 'cheaper';
+  const pct = Math.abs(gapPct).toFixed(4);
+  return `${label} is ${pct}% ${dir} than ${tail}.`;
 }
 
 export function App() {
@@ -89,29 +102,48 @@ export function App() {
   return (
     <main className="shell">
       <header className="head">
-        <h1>Ondo implied vs spot</h1>
+        <h1 className="head-title">
+          <span className="head-title-line">Ondo tokenized stocks</span>
+          <span className="head-title-line head-title-line--sub">Implied vs spot price</span>
+        </h1>
+
         <p className="lede">
-          Underlying quote (Finnhub) vs Ondo primary-market implied per share.
+          Comparison of the live underlying spot quote to Ondo’s primary-market token price and implied USD per share.
+        </p>
+        <p className="explain">
+          Ondo tokenized stocks accrue dividends through an increasing shares-per-token ratio, so the token’s dollar
+          price is not directly comparable to the underlying equity without the shares multiplier. Implied USD per share
+          is Ondo’s primary-market token price divided by that multiplier; the gap uses implied per share vs. the Finnhub
+          live quote for the selected ticker.
         </p>
       </header>
 
       <section className="controls">
-        <label className="field">
-          <span className="label">Symbol</span>
-          <input
-            type="text"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void load();
-            }}
-            maxLength={12}
-            autoComplete="off"
-          />
-        </label>
-        <button type="button" className="btn" disabled={loading} onClick={() => void load()}>
-          Refresh
-        </button>
+        <p className="symbol-hint">
+          Try with QQQ, TSLA, or AAPL — full list of tokenized Ondo stocks available on{' '}
+          <a href="https://app.ondo.finance/" target="_blank" rel="noopener noreferrer">
+            app.ondo.finance
+          </a>
+          . Geographic restrictions apply.
+        </p>
+        <div className="controls-row">
+          <label className="field">
+            <span className="label">Symbol</span>
+            <input
+              type="text"
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void load();
+              }}
+              maxLength={12}
+              autoComplete="off"
+            />
+          </label>
+          <button type="button" className="btn" disabled={loading} onClick={() => void load()}>
+            Refresh
+          </button>
+        </div>
       </section>
 
       <section className={statusClass} aria-live="polite">
@@ -119,20 +151,30 @@ export function App() {
       </section>
 
       {data ? (
-        <ul className="metrics">
-          <li>
-            <span className="k">Spot</span>
-            <span className="v">{fmtUsd(data.underlyingUsd)}</span>
-          </li>
-          <li>
-            <span className="k">Implied</span>
-            <span className="v">{fmtUsd(data.impliedUsd)}</span>
-          </li>
-          <li>
-            <span className="k">Gap</span>
-            <span className={`v${data.gapPct >= 0 ? ' pos' : ' neg'}`}>{fmtPct(data.gapPct)}</span>
-          </li>
-        </ul>
+        <>
+          <p className="metric-hint">
+            Implied per share = Ondo primary token price ÷ shares per token.
+          </p>
+          <ul className="metrics">
+            <li>
+              <span className="k">Spot (reference)</span>
+              <span className="v">{fmtUsd(data.underlyingUsd)}</span>
+            </li>
+            <li>
+              <span className="k">Ondo token (primary)</span>
+              <span className="v">{fmtUsd(data.ondoTokenUsd)}</span>
+            </li>
+            <li>
+              <span className="k">Implied price per share</span>
+              <span className="v">{fmtUsd(data.impliedUsd)}</span>
+            </li>
+            <li>
+              <span className="k">Gap</span>
+              <span className={`v${data.gapPct >= 0 ? ' pos' : ' neg'}`}>{fmtPct(data.gapPct)}</span>
+            </li>
+          </ul>
+          <p className="interpret">{gapInterpretation(data.symbol, data.gapPct)}</p>
+        </>
       ) : null}
     </main>
   );

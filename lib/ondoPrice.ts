@@ -1,6 +1,8 @@
 export type PriceGapResult = {
   symbol: string;
   underlyingUsd: number;
+  /** Ondo primary-market token price in USD (not comparable to spot without the multiplier). */
+  ondoTokenUsd: number;
   impliedUsd: number;
   gapPct: number;
 };
@@ -101,22 +103,27 @@ export async function getUnderlyingPrice(symbol: string): Promise<number> {
   return price;
 }
 
-export async function getImpliedPrice(symbol: string): Promise<number> {
+async function getOndoTokenAndImpliedUsd(symbol: string): Promise<{ ondoTokenUsd: number; impliedUsd: number }> {
   const ondoSymbol = `${symbol}on`;
   const text = await fetchOndoAssetsText();
   const { price: priceStr, sharesMultiplier: multStr } = parseImpliedFromOndoAssetsText(text, ondoSymbol);
 
-  const price = parseFloat(priceStr);
+  const ondoTokenUsd = parseFloat(priceStr);
   const multiplier = parseFloat(multStr);
-  if (!Number.isFinite(price) || !Number.isFinite(multiplier) || multiplier === 0) {
+  if (!Number.isFinite(ondoTokenUsd) || !Number.isFinite(multiplier) || multiplier === 0) {
     throw new Error(`Invalid Ondo price/multiplier for ${ondoSymbol}`);
   }
-  return price / multiplier;
+  return { ondoTokenUsd, impliedUsd: ondoTokenUsd / multiplier };
+}
+
+export async function getImpliedPrice(symbol: string): Promise<number> {
+  const { impliedUsd } = await getOndoTokenAndImpliedUsd(symbol);
+  return impliedUsd;
 }
 
 export async function getPriceGap(symbol: string): Promise<PriceGapResult> {
-  const [impliedUsd, underlyingUsd] = await Promise.all([
-    getImpliedPrice(symbol),
+  const [{ ondoTokenUsd, impliedUsd }, underlyingUsd] = await Promise.all([
+    getOndoTokenAndImpliedUsd(symbol),
     getUnderlyingPrice(symbol),
   ]);
 
@@ -129,6 +136,7 @@ export async function getPriceGap(symbol: string): Promise<PriceGapResult> {
   return {
     symbol,
     underlyingUsd,
+    ondoTokenUsd,
     impliedUsd,
     gapPct,
   };
