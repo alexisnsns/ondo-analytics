@@ -1,10 +1,19 @@
+import { getCowswapUsdPerOndoToken } from './cowswapQuote.js';
+
 export type PriceGapResult = {
   symbol: string;
   underlyingUsd: number;
   /** Ondo primary-market token price in USD (not comparable to spot without the multiplier). */
   ondoTokenUsd: number;
   impliedUsd: number;
-  gapPct: number;
+  /** Ondo primary-market shares represented by one token (dividend accrual). */
+  sharesMultiplier: number;
+  /** CoW USDC sell quote, adjusted to USD per underlying share (÷ sharesMultiplier). */
+  cowswapUsd: number | null;
+  /** (Ondo implied/share − spot) / spot. */
+  ondoGapPct: number;
+  /** (CoW implied/share − spot) / spot; null when no CoW quote. */
+  cowswapGapPct: number | null;
 };
 
 /** Stay under Vercel Hobby’s 10s function cap so we can return JSON instead of FUNCTION_INVOCATION_FAILED. */
@@ -103,17 +112,21 @@ export async function getUnderlyingPrice(symbol: string): Promise<number> {
   return price;
 }
 
-async function getOndoTokenAndImpliedUsd(symbol: string): Promise<{ ondoTokenUsd: number; impliedUsd: number }> {
+async function getOndoTokenAndImpliedUsd(symbol: string): Promise<{
+  ondoTokenUsd: number;
+  impliedUsd: number;
+  sharesMultiplier: number;
+}> {
   const ondoSymbol = `${symbol}on`;
   const text = await fetchOndoAssetsText();
   const { price: priceStr, sharesMultiplier: multStr } = parseImpliedFromOndoAssetsText(text, ondoSymbol);
 
   const ondoTokenUsd = parseFloat(priceStr);
-  const multiplier = parseFloat(multStr);
-  if (!Number.isFinite(ondoTokenUsd) || !Number.isFinite(multiplier) || multiplier === 0) {
+  const sharesMultiplier = parseFloat(multStr);
+  if (!Number.isFinite(ondoTokenUsd) || !Number.isFinite(sharesMultiplier) || sharesMultiplier === 0) {
     throw new Error(`Invalid Ondo price/multiplier for ${ondoSymbol}`);
   }
-  return { ondoTokenUsd, impliedUsd: ondoTokenUsd / multiplier };
+  return { ondoTokenUsd, impliedUsd: ondoTokenUsd / sharesMultiplier, sharesMultiplier };
 }
 
 export async function getImpliedPrice(symbol: string): Promise<number> {
@@ -122,22 +135,39 @@ export async function getImpliedPrice(symbol: string): Promise<number> {
 }
 
 export async function getPriceGap(symbol: string): Promise<PriceGapResult> {
-  const [{ ondoTokenUsd, impliedUsd }, underlyingUsd] = await Promise.all([
+  const [{ ondoTokenUsd, impliedUsd, sharesMultiplier }, underlyingUsd, cowswapPerToken] = await Promise.all([
     getOndoTokenAndImpliedUsd(symbol),
     getUnderlyingPrice(symbol),
+    getCowswapUsdPerOndoToken(symbol).catch((e) => {
+      console.warn('[cowswap]', e instanceof Error ? e.message : e);
+      return null;
+    }),
   ]);
 
   if (underlyingUsd === 0) {
     throw new Error('Underlying price is zero; cannot compute gap');
   }
 
-  const gapPct = ((impliedUsd - underlyingUsd) / underlyingUsd) * 100;
+  const cowswapUsd =
+    cowswapPerToken != null && Number.isFinite(cowswapPerToken) && sharesMultiplier !== 0
+      ? cowswapPerToken / sharesMultiplier
+      : null;
+
+  const ondoGapPct = ((impliedUsd - underlyingUsd) / underlyingUsd) * 100;
+
+  const cowswapGapPct =
+    cowswapUsd != null && Number.isFinite(cowswapUsd)
+      ? ((cowswapUsd - underlyingUsd) / underlyingUsd) * 100
+      : null;
 
   return {
     symbol,
     underlyingUsd,
     ondoTokenUsd,
     impliedUsd,
-    gapPct,
+    sharesMultiplier,
+    cowswapUsd,
+    ondoGapPct,
+    cowswapGapPct,
   };
 }
