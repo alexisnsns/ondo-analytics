@@ -82,7 +82,45 @@ function cowswapGapInterpretation(symbol: string, gapPct: number | null) {
   return `${label} is ${pct}% ${dir} ${tail}.`;
 }
 
+/** Regular US equity session: Mon–Fri, 9:30–16:00 America/New_York (no holiday calendar). */
+function isUsEquityRegularSession(at: Date): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(at);
+
+  const weekday = parts.find((p) => p.type === 'weekday')?.value;
+  if (weekday === 'Sat' || weekday === 'Sun') return false;
+
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  const mins = hour * 60 + minute;
+  const open = 9 * 60 + 30;
+  const close = 16 * 60;
+  return mins >= open && mins < close;
+}
+
+function useOutsideUsEquityHours() {
+  const [outside, setOutside] = useState(() => !isUsEquityRegularSession(new Date()));
+
+  useEffect(() => {
+    const sync = () => setOutside(!isUsEquityRegularSession(new Date()));
+    const id = window.setInterval(sync, 60_000);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, []);
+
+  return outside;
+}
+
 export function App() {
+  const outsideUsHours = useOutsideUsEquityHours();
   const [symbol, setSymbol] = useState('SPY');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,7 +163,14 @@ export function App() {
   const statusText = error ?? (data ? `Updated · ${data.symbol}on` : '');
 
   return (
-    <main className="shell">
+    <div className="page-wrap">
+      {outsideUsHours ? (
+        <p className="liquidity-warning" role="status">
+          <strong>Outside U.S. market hours.</strong> With thinner liquidity, spot vs token and DEX quotes can diverge
+          more than usual—treat large gaps as less meaningful until regular NYSE/Nasdaq hours.
+        </p>
+      ) : null}
+      <main className="shell">
       <header className="head">
         <h1 className="head-title">
           <span className="head-title-line">Ondo tokenized stocks</span>
@@ -265,5 +310,6 @@ export function App() {
         </p>
       </footer>
     </main>
+    </div>
   );
 }
